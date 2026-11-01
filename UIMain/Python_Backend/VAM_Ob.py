@@ -519,6 +519,35 @@ class VAM:
         max_off = max(0.0, (int(self.proj_px_h) - s_v) / 2.0 - 1)
         return int(round(max(-max_off, min(max_off, off_px))))
 
+    AUTO_CLIP_FRAC = 0.02   # share of lit projector pixels allowed to saturate (auto intensity)
+
+    def auto_intensity(self, clip_frac=AUTO_CLIP_FRAC, step=0.05):
+        """Intensity scale at which `clip_frac` of the lit pixels saturate at 255.
+
+        The video maps the sinogram's 99.9th percentile to 255, multiplies by
+        video_intensity and truncates, so the clipped share follows from the
+        distribution of lit values.  On the 3DBenchy (OSMO, absorption on),
+        clipping 2% of lit pixels lowered the best-threshold IoU by ~1 point and
+        raised the in-part dose rate ~1.5x.  Rounded DOWN to the slider step so
+        clipping stays at or below the target."""
+        if self.sino is None:
+            return None
+        a = self.sino.array
+        stride = max(1, int(np.ceil(a.size / 2e7)))     # subsample angles on very large sinograms
+        a = np.asarray(a[:, ::stride, :] if stride > 1 else a, dtype=np.float32)
+        norm = float(np.percentile(a, 99.9))
+        if norm <= 0:
+            return None
+        v = a / norm
+        lit = v[v * 255.0 >= 1.0]                        # pixels that are on at 1x
+        if lit.size == 0:
+            return None
+        k = 1.0 / float(np.quantile(lit, 1.0 - clip_frac))
+        k = max(step, np.floor(k / step + 1e-9) * step)
+        return {"intensity": round(float(k), 2),
+                "clip_pct": 100.0 * float(np.mean(k * lit >= 1.0)),
+                "target_pct": 100.0 * clip_frac}
+
     def get_preview_frames(self):
         """
         Return the sinogram rendered as a list of (H, W) uint8 numpy arrays

@@ -1478,6 +1478,23 @@ def modify_sino():
         traceback.print_exc()
         return jsonify({"status": "error", "message": str(e)}), 500
 
+@app.post("/api/auto_intensity")
+def auto_intensity():
+    """Highest intensity scale that saturates only a small share of lit pixels."""
+    if vam.sino is None:
+        return jsonify({"status": "error", "message": "Run a print first"}), 400
+    try:
+        res = vam.auto_intensity()
+        if res is None:
+            return jsonify({"status": "error", "message": "The projection is blank"}), 400
+        print(f"[VAM] Auto intensity {res['intensity']:.2f}x -> "
+              f"{res['clip_pct']:.2f}% of lit pixels clipped (target {res['target_pct']:.0f}%)")
+        return jsonify({"status": "ok", **res})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
 @app.post("/api/update_video_config")
 def update_video_config():
     global preview_frames, preview_fps, mp4_path

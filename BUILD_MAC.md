@@ -58,6 +58,15 @@ Branched off `mac-support`. All three lean on our Metal-capable VAMToolbox fork.
   correction* section in the projector editor. Correcting the 8-bit frames rather than the
   float sinogram costs <0.1% IoU in simulation, and VAMToolbox's `bit_depth > 8` path
   writes into uint8 buffers, so the LUT works on the 8-bit output.
+- **Auto intensity.** The *auto* button beside the Print-Output intensity slider calls
+  `POST /api/auto_intensity`, which returns the highest intensity (rounded down to the
+  0.05 slider step) at which no more than 2% of the lit projector pixels saturate
+  (`VAM.auto_intensity`, `AUTO_CLIP_FRAC`). On the 3DBenchy, 2% clipping cost about
+  1 IoU point in simulation and raised the in-part dose rate about 1.5x.
+- **Fuller run record.** The run `.json` also records the source model(s) and GUI
+  transform, part size, absorption coefficient, vial correction and resin index,
+  projector mm/px and throw ratio, video intensity and vertical offset, and the
+  optimize time reported by the worker process.
 
 ## One-time setup
 

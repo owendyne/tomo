@@ -273,6 +273,7 @@ export default function App() {
   const zOffsetTimer = useRef(null);
   const [previewFrame, setPreviewFrame] = useState(0);
   const [videoIntensity, setVideoIntensity] = useState(1);   // display + saved brightness scale
+  const [autoClip, setAutoClip] = useState(null);            // { k, pct } from the Auto intensity button
   const [videoZoom, setVideoZoom] = useState(1);             // preview zoom
   const [videoPan, setVideoPan] = useState({ x: 0, y: 0 });  // preview pan (when zoomed)
   const panDrag = useRef(null);
@@ -1004,6 +1005,19 @@ export default function App() {
       finally { clearTimeout(slow); setZOffsetLoading(false); }
     }, 250);
   }
+
+  // Highest intensity that saturates only a small share (2%) of the lit projector pixels —
+  // computed on the backend from the sinogram, then shown on the slider.
+  async function applyAutoIntensity() {
+    try {
+      const r = await fetch(`${API}/auto_intensity`, { method: "POST" });
+      const d = await r.json();
+      if (!r.ok || d.status !== "ok") throw new Error(d.message || r.statusText);
+      setVideoIntensity(d.intensity);
+      setAutoClip({ k: d.intensity, pct: d.clip_pct });
+    } catch (e) { console.error("auto intensity failed", e); }
+  }
+  useEffect(() => { setAutoClip(null); }, [previewInfo]);   // new result -> old estimate no longer applies
 
   function handleExportSettings() {
     const blob = new Blob([JSON.stringify(collectSettings(), null, 2)], { type: "application/json" });
@@ -1779,6 +1793,11 @@ export default function App() {
                     onChange={e => { const v = parseFloat(e.target.value); if (!isNaN(v) && v >= 0) setVideoIntensity(v); }}
                     style={{ width: 50, background: "#16161f", color: C.text, border: `1px solid ${C.border}`, borderRadius: 4, padding: "2px 4px", fontSize: 11, fontFamily: "monospace", outline: "none" }} />
                   <span style={{ fontSize: 11, color: C.muted }}>×</span>
+                  <button onClick={applyAutoIntensity} style={{ ...zb, width: "auto", padding: "0 8px", fontSize: 11 }}
+                    title="Set the highest intensity that saturates no more than 2% of the lit projector pixels — faster gelation with little loss of shape">auto</button>
+                  {autoClip && autoClip.k === videoIntensity && (
+                    <span style={{ fontSize: 11, color: C.muted, whiteSpace: "nowrap" }}>{autoClip.pct.toFixed(1)}% clipped</span>
+                  )}
                   <span style={{ fontSize: 11, color: C.muted, marginLeft: 6 }}>Zoom</span>
                   <button onClick={() => setVideoZoom(z => Math.max(1, +(z - 0.25).toFixed(2)))} style={zb}>−</button>
                   <span style={{ fontSize: 11, color: C.text, width: 26, textAlign: "center" }}>{videoZoom.toFixed(1)}×</span>
