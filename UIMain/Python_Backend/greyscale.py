@@ -25,7 +25,6 @@ import os
 import numpy as np
 
 _BLACK_LEVEL_TOL = 1e-6
-_AVG_LABELS = ("avg", "average", "mean", "std", "sd", "stdev")
 
 
 def _num(cell):
@@ -35,28 +34,20 @@ def _num(cell):
         return None
 
 
-def _to_fraction(levels):
-    """Greyscale levels may be fractions (0..1), percent (0..100) or 8-bit (0..255)."""
-    top = max(levels)
-    if top > 100.5:
-        return [v / 255.0 for v in levels]
-    if top > 1.5:
-        return [v / 100.0 for v in levels]
-    return list(levels)
-
-
 def parse_calibration_csv(path):
     """Read a greyscale calibration CSV and return a "lut" config.
 
-    Two layouts are accepted:
-      * long  — one reading per row: a level column and a measured-output column
-                (header optional; repeated levels are averaged).  Columns are found
-                by header name (grey/gray/level/pixel ... and irradiance/power/
-                intensity/output/measured ...), else the first and last numeric
-                columns are used.
-      * wide  — first row is the levels (an optional label cell first), each
-                following row is one set of readings.  Rows labelled
-                Average/Mean/SD are skipped, as are blank cells.
+    The file has two columns and one row per greyscale level:
+
+        greyscale_fraction,irradiance_mW_cm2
+        0.0,0.079
+        0.5,3.373
+        1.0,13.602
+
+    Column 1 is the displayed greyscale level as a fraction (0 = black,
+    1 = full white).  Column 2 is the averaged irradiance measured at that level;
+    other units work too, because readings are normalised to full white.  A
+    header row is optional, and a full-white row is required.
     """
     with open(path, newline="", encoding="utf-8-sig") as f:
         sample = f.read(4096)
@@ -66,60 +57,35 @@ def parse_calibration_csv(path):
         except csv.Error:
             dialect = csv.excel
         rows = [r for r in csv.reader(f, dialect) if any(c.strip() for c in r)]
-    if len(rows) < 2:
-        raise ValueError("Calibration file has fewer than two rows")
 
-    readings = {}                                   # level -> list of measured values
-    first_numeric = [v for v in (_num(c) for c in rows[0]) if v is not None]
-    if len(first_numeric) >= 3:                     # wide layout
-        head = rows[0]
-        lead = 0 if _num(head[0]) is not None else 1
-        levels = [_num(c) for c in head[lead:]]
-        for r in rows[1:]:
-            label = (r[0] if r else "").strip().lower()
-            if lead and label.startswith(_AVG_LABELS):
-                continue
-            for lv, cell in zip(levels, r[lead:]):
-                v = _num(cell)
-                if lv is not None and v is not None:
-                    readings.setdefault(lv, []).append(v)
-    else:                                           # long layout
-        header = [c.strip().lower() for c in rows[0]]
-        has_header = all(_num(c) is None for c in rows[0] if c.strip())
-        data = rows[1:] if has_header else rows
+    points = {}                                     # greyscale fraction -> irradiance
+    for i, r in enumerate(rows):
+        cells = [c for c in r if c.strip()]
+        nums = [_num(c) for c in cells]
+        if any(v is None for v in nums):
+            if i == 0:
+                continue                            # header row
+            raise ValueError(f"Row {i + 1} is not numeric: {', '.join(r)}")
+        if len(nums) != 2:
+            raise ValueError(f"Row {i + 1} has {len(nums)} values; expected 2 "
+                             "(greyscale fraction, irradiance)")
+        level, value = nums
+        if not 0.0 <= level <= 1.0:
+            raise ValueError(f"Row {i + 1}: greyscale fraction {level:g} is outside 0-1")
+        if level in points:
+            raise ValueError(f"Greyscale fraction {level:g} is listed more than once")
+        points[level] = value
 
-        def find(*key_groups):
-            # Earlier groups win, so an exact 0-255 pixel column beats a nominal
-            # "greyscale fraction" column when a file has both.
-            if has_header:
-                for keys in key_groups:
-                    for i, h in enumerate(header):
-                        if any(k in h for k in keys):
-                            return i
-            return None
-        li = find(("pixel", "code", "dn"), ("grey", "gray", "level", "input", "command"))
-        oi = find(("irradiance", "power", "intensity", "output", "measured", "mw", "reading"))
-        for r in data:
-            nums = [(i, _num(c)) for i, c in enumerate(r) if _num(c) is not None]
-            if len(nums) < 2:
-                continue
-            lv = _num(r[li]) if li is not None and li < len(r) else nums[0][1]
-            v = _num(r[oi]) if oi is not None and oi < len(r) else nums[-1][1]
-            if lv is not None and v is not None:
-                readings.setdefault(lv, []).append(v)
-
-    if len(readings) < 2:
-        raise ValueError("Calibration needs readings at two or more greyscale levels")
-    raw_levels = sorted(readings)
-    levels = _to_fraction(raw_levels)
-    response = [float(np.mean(readings[lv])) for lv in raw_levels]
-    if abs(levels[-1] - 1.0) > 1e-3:
-        raise ValueError("Calibration must include a full-white (255 / 100% / 1.0) reading")
+    if len(points) < 2:
+        raise ValueError("Calibration needs at least two greyscale levels")
+    levels = sorted(points)
+    response = [points[lv] for lv in levels]
+    if abs(levels[-1] - 1.0) > 1e-6:
+        raise ValueError("Calibration must include a full-white (1.0) row")
     if response[-1] <= 0:
-        raise ValueError("Full-white reading must be positive")
+        raise ValueError("Full-white irradiance must be positive")
     return {"mode": "lut", "levels": levels, "response": response,
-            "source": os.path.basename(path),
-            "n_readings": int(sum(len(v) for v in readings.values()))}
+            "source": os.path.basename(path)}
 
 
 def _normalised_response(cfg):

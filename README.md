@@ -61,12 +61,19 @@ Open **Voxelize → Projector → ✎ Edit** and choose a *Greyscale correction*
 | **Gamma** | Only a nominal display gamma is known (e.g. 2.2). |
 | **Measured LUT** | You have measured output at several grey levels — recommended. |
 
-To measure, display full-frame uniform images at a range of grey levels from 0 to 255 (e.g. 0, 26, 51 … 255), read the irradiance at the print position with a meter at the write wavelength, and load a CSV with **Load calibration CSV…**. Two layouts are accepted:
+To measure, display full-frame uniform grey images (e.g. 0%, 10%, 20% … 100% white), read the irradiance at the print position with a meter at the write wavelength (averaging several readings per level), and load a two-column CSV with **Load calibration CSV…**:
 
-- **long** — one reading per row, e.g. `pixel_value,irradiance_mW_cm2`. Levels may be 8-bit values (0–255), percent (0–100) or fractions (0–1); repeated readings at a level are averaged.
-- **wide** — the first row lists the levels and each following row is one set of readings (a spreadsheet exported as CSV; `Average`/`Mean`/`SD` rows are skipped).
+```csv
+greyscale_fraction,irradiance_mW_cm2
+0.0,0.079
+0.1,0.303
+0.5,3.373
+1.0,13.602
+```
 
-The file must include a full-white reading; readings are normalised to it, so any units work. The correction is applied to the live preview and the exported video, saved with the projector profile, embedded in `.tomo` runs, and recorded (with the exact 256-entry LUT) in the run's `.json`. An example measured on an OpenCAL V2 light engine at 405 nm is in [`calibration/opencal_v2_405nm_greyscale.csv`](calibration/opencal_v2_405nm_greyscale.csv).
+Column 1 is the greyscale level as a fraction (0 = black, 1 = full white); column 2 is the averaged irradiance at that level. The header row is optional, and the levels don't need to be evenly spaced.
+
+The file must include a full-white (1.0) row; readings are normalised to it, so other units work too. The correction is applied to the live preview and the exported video, saved with the projector profile, embedded in `.tomo` runs, and recorded (with the exact 256-entry LUT) in the run's `.json`. An example measured on an OpenCAL V2 light engine at 405 nm is in [`calibration/opencal_v2_405nm_greyscale.csv`](calibration/opencal_v2_405nm_greyscale.csv).
 
 ### Previews and output
 - **Interactive 3D preview** of the voxelized target and a marching-cubes surface mesh (Three.js), with a reference print vial for scale.

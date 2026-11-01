@@ -1168,7 +1168,7 @@ export default function App() {
                   </span>
                 </div>)}
               <div style={{ fontSize: 11, color: C.muted, marginTop: 6, lineHeight: 1.5 }}>
-                Maps the linear intensities the optimizer computes onto the pixel values that make this projector deliver them. For a measured LUT, record the irradiance of full-frame grey images (0–255) and load a CSV of level vs. reading.
+                Maps the linear intensities the optimizer computes onto the pixel values that make this projector deliver them. For a measured LUT, load a two-column CSV: greyscale fraction (0–1), averaged irradiance (mW/cm²) — one row per grey level, including 1.0 (full white).
               </div>
             </div>
             <div style={{ fontSize: 11, color: C.muted, marginTop: 8, lineHeight: 1.5 }}>

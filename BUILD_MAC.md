@@ -52,8 +52,8 @@ Branched off `mac-support`. All three lean on our Metal-capable VAMToolbox fork.
   builds a 256-entry LUT from a projector's `greyscale` config (`off` / `gamma` /
   measured `lut`) and `VAM_Ob` applies it to the uint8 frames in both
   `get_preview_frames` and `saveVid`, after VAMToolbox's percentile normalisation and
-  intensity gain. `POST /api/greyscale_calibration` parses a measured CSV (long or wide
-  layout); `start_slice`, `update_video_config` and `save_run` accept the config; `.tomo`
+  intensity gain. `POST /api/greyscale_calibration` parses a two-column calibration CSV
+  (greyscale fraction, averaged irradiance); `start_slice`, `update_video_config` and `save_run` accept the config; `.tomo`
   files store it and the run `.json` records it with the LUT. UI: a *Greyscale
   correction* section in the projector editor. Correcting the 8-bit frames rather than the
   float sinogram costs <0.1% IoU in simulation, and VAMToolbox's `bit_depth > 8` path
