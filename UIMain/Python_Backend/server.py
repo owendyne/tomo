@@ -149,7 +149,7 @@ slice_start     = 0.0   # wall-clock at optimize start (for a time-based progres
 slice_estimate_s = 1.0  # estimated optimize wall-time (so the bar moves even at 1 iter)
 # vam.__dict__ keys that are NOT JSON-serializable / get rebuilt in the worker.
 SLICE_SKIP_ATTRS = {"t_geo", "sino", "recon", "_pipe", "dose_metrics", "_verbose_dir",
-                    "_sino_is_rebinned", "_optimize_s"}
+                    "_sino_is_rebinned", "_optimize_s", "models", "part_size_mm"}
 
 import threading
 import vamtoolbox
@@ -435,6 +435,7 @@ def start_voxelize():
         voxelize_done = False
 
         transformed_meshes = []
+        model_record = []                  # source file + GUI transform, for the run record
         rot_x_neg90 = tf.rotation_matrix(-np.pi/2, [1, 0, 0])
         rot_x_pos90 = tf.rotation_matrix(np.pi/2, [1, 0, 0])
 
@@ -462,6 +463,9 @@ def start_voxelize():
             mesh.apply_transform(m4)
             mesh.apply_transform(rot_x_pos90)
             transformed_meshes.append(mesh)
+            model_record.append({"filename": m_info["filename"],
+                                 "scale": [round(float(s), 6) for s in np.linalg.norm(m4[:3, :3], axis=0)],
+                                 "matrix": [float(x) for x in m4.flatten(order='F')]})
 
         if not transformed_meshes:
             return jsonify({"status": "error", "message": "No valid models to voxelize (files missing) — re-add your STL."}), 400
@@ -474,6 +478,8 @@ def start_voxelize():
         ext = np.asarray(unified_mesh.extents, dtype=float)
         b = unified_mesh.bounds
         eff_res = res_value
+        vam.models = model_record
+        vam.part_size_mm = [round(float(e), 3) for e in ext]
         # Match voxelizeTargetOpenGL (square_xy=True): it centres the part and sizes
         # the XY grid to the XY DIAGONAL (so a rotating part never clips); the worker
         # then re-places it at the part's XY offset (+2*offset).  Replicate exactly so
@@ -781,6 +787,7 @@ def reset():
     vam.sino = None
     vam.recon = None
     vam.path = None
+    vam.models = None; vam.part_size_mm = None
     voxelize_done = False; voxel_info = None
     slice_done = False; slice_info = None
     preview_frames = None
@@ -982,25 +989,39 @@ def _gather_run_params(v):
     """Everything it took to produce the current result — parameters + grid + timing
     + dose quality — so a run is fully reproducible/inspectable."""
     t = v.t_geo.array if getattr(v, "t_geo", None) is not None else None
-    pipe_t = getattr(getattr(v, "_pipe", None), "timing", {}) or {}
+    pipe_t = dict(getattr(getattr(v, "_pipe", None), "timing", {}) or {})
+    if "optimize" not in pipe_t and getattr(v, "_optimize_s", None) is not None:
+        pipe_t["optimize"] = v._optimize_s          # subprocess run: time comes from the worker
+    throw = float(getattr(v, "throw_ratio", float("inf")))
     return {
         "timestamp": _dt.datetime.now().isoformat(timespec="seconds"),
+        "models": getattr(v, "models", None),        # source file(s) + GUI transform
+        "part_size_mm": getattr(v, "part_size_mm", None),
         "resolution_mm": float(v.res),
         "pitch_um": round(float(v.res) * 1000, 1),
         "method": v.method,
         "n_iterations": int(v.n_iter),
         "d_h": float(v.d_h), "d_l": float(v.d_l),
         "absorption": bool(v.absorption),
+        "absorption_coeff_cm": (float(v.absorption_coeff) if v.absorption else None),
         "diffusion": bool(v.diffusion),
         "cuda": bool(v.cuda),
         "slab": str(v.slab),
         "vial_radius_mm": float(v.vial_radius_mm),
+        "vial_correction": bool(getattr(v, "vial_correction", False)),
+        "resin_ri": float(v.resin_ri),
+        "projector": {"px_w": int(v.proj_px_w), "px_h": int(v.proj_px_h),
+                      "width_mm": float(v.proj_width),
+                      "mm_per_px": float(v.proj_width) / max(int(v.proj_px_w), 1),
+                      "throw_ratio": (None if throw == float("inf") else throw)},   # None = telecentric
         "grid_shape": (list(t.shape) if t is not None else None),
         "voxel_count": (int(t.size) if t is not None else None),
         "sinogram_shape": (list(v.sino.array.shape) if v.sino is not None else None),
         "n_angles": (int(v.sino.array.shape[1]) if v.sino is not None else None),
         "video": {"fps": v.video_fps, "rpm": v.video_rpm,
-                  "duration_s": v.video_duration_s, "codec": v.video_codec},
+                  "duration_s": v.video_duration_s, "codec": v.video_codec,
+                  "intensity": float(getattr(v, "video_intensity", 1.0)),
+                  "v_offset_mm": float(getattr(v, "video_v_offset_mm", 0.0))},
         "greyscale_correction": _greyscale_record(getattr(v, "greyscale", None)),
         "timing_s": {k: round(float(val), 2) for k, val in pipe_t.items()},
         "dose_metrics": getattr(v, "dose_metrics", None),
