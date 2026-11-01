@@ -45,11 +45,28 @@ Tomo is organized as four tabs that mirror the CAL pipeline:
 - **Absorption compensation** — account for resin optical attenuation (Beer–Lambert) so deep regions still receive the correct dose.
 - **Diffusion correction** — compensate for cure/oxygen diffusion blur (available with the **BCLP** optimizer; the control auto-disables for OSMO).
 - Corrections use the **real physical pitch** of the voxel grid, not pixel units.
+- **Projector greyscale correction** — DLP light engines are not linear in pixel value (a typical one delivers ~25% of full irradiance at 50% grey). Each projector profile can carry a gamma value or a **measured lookup table**, which maps the linear intensities the optimizer computes onto the 8-bit values that make the projector deliver them. See [Projector greyscale calibration](#projector-greyscale-calibration).
 
 ### Built for large parts
 - **GPU OpenGL voxelizer** renders the mesh **layer-by-layer to an off-screen framebuffer**, so memory stays bounded per slice and very large XY grids are handled (validated well past 1900×1900). High resolution is never silently coarsened.
 - **Memory / z-slab mode** (`Auto` / `Off` / fixed) lets billion-voxel optimizations fit in RAM by chunking the volume along Z.
 - **Hardware auto-detection** — Tomo detects your CUDA GPU and auto-tunes the run; CUDA is used when available, with a CPU fallback.
+
+### Projector greyscale calibration
+Open **Voxelize → Projector → ✎ Edit** and choose a *Greyscale correction*:
+
+| Mode | Use when |
+|------|----------|
+| **Off** | The projector (or its driver) is already linear. |
+| **Gamma** | Only a nominal display gamma is known (e.g. 2.2). |
+| **Measured LUT** | You have measured output at several grey levels — recommended. |
+
+To measure, display full-frame uniform images at a range of grey levels from 0 to 255 (e.g. 0, 26, 51 … 255), read the irradiance at the print position with a meter at the write wavelength, and load a CSV with **Load calibration CSV…**. Two layouts are accepted:
+
+- **long** — one reading per row, e.g. `pixel_value,irradiance_mW_cm2`. Levels may be 8-bit values (0–255), percent (0–100) or fractions (0–1); repeated readings at a level are averaged.
+- **wide** — the first row lists the levels and each following row is one set of readings (a spreadsheet exported as CSV; `Average`/`Mean`/`SD` rows are skipped).
+
+The file must include a full-white reading; readings are normalised to it, so any units work. The correction is applied to the live preview and the exported video, saved with the projector profile, embedded in `.tomo` runs, and recorded (with the exact 256-entry LUT) in the run's `.json`. An example measured on an OpenCAL V2 light engine at 405 nm is in [`calibration/opencal_v2_405nm_greyscale.csv`](calibration/opencal_v2_405nm_greyscale.csv).
 
 ### Previews and output
 - **Interactive 3D preview** of the voxelized target and a marching-cubes surface mesh (Three.js), with a reference print vial for scale.

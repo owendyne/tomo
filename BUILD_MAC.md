@@ -46,6 +46,19 @@ Branched off `mac-support`. All three lean on our Metal-capable VAMToolbox fork.
   the app runs on Metal vs pure-CPU. See `benchmarks/README.md`; on this hardware
   Metal is ~11–16× the CPU path with identical loss.
 
+## Features added on `feature/greyscale-lut`
+
+- **Projector greyscale (gamma) correction.** New `UIMain/Python_Backend/greyscale.py`
+  builds a 256-entry LUT from a projector's `greyscale` config (`off` / `gamma` /
+  measured `lut`) and `VAM_Ob` applies it to the uint8 frames in both
+  `get_preview_frames` and `saveVid`, after VAMToolbox's percentile normalisation and
+  intensity gain. `POST /api/greyscale_calibration` parses a measured CSV (long or wide
+  layout); `start_slice`, `update_video_config` and `save_run` accept the config; `.tomo`
+  files store it and the run `.json` records it with the LUT. UI: a *Greyscale
+  correction* section in the projector editor. Correcting the 8-bit frames rather than the
+  float sinogram costs <0.1% IoU in simulation, and VAMToolbox's `bit_depth > 8` path
+  writes into uint8 buffers, so the LUT works on the 8-bit output.
+
 ## One-time setup
 
 Requires **Node 20+** (upstream repo predates it; system Node may be old):

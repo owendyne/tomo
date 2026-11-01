@@ -45,6 +45,7 @@ from flask import Flask, jsonify, request, send_file, send_from_directory
 from flask_cors import CORS
 
 from VAM_Ob import VAM
+import greyscale
 
 # =============================================================================
 # PYINSTALLER PATH RESOLUTION
@@ -908,6 +909,7 @@ def start_slice():
     if "proj_px_w" in data: vam.proj_px_w = int(data["proj_px_w"])
     if "proj_px_h" in data: vam.proj_px_h = int(data["proj_px_h"])
     if "proj_width" in data: vam.proj_width = float(data["proj_width"])
+    if "greyscale" in data: vam.greyscale = data["greyscale"]      # projector greyscale LUT/gamma
     # Telecentric (collimated) -> throw_ratio = inf; otherwise the projector's finite throw ratio
     if "telecentric" in data or "throw_ratio" in data:
         vam.throw_ratio = (float("inf") if data.get("telecentric", True)
@@ -999,9 +1001,38 @@ def _gather_run_params(v):
         "n_angles": (int(v.sino.array.shape[1]) if v.sino is not None else None),
         "video": {"fps": v.video_fps, "rpm": v.video_rpm,
                   "duration_s": v.video_duration_s, "codec": v.video_codec},
+        "greyscale_correction": _greyscale_record(getattr(v, "greyscale", None)),
         "timing_s": {k: round(float(val), 2) for k, val in pipe_t.items()},
         "dose_metrics": getattr(v, "dose_metrics", None),
     }
+
+
+def _greyscale_record(cfg):
+    """Greyscale correction for the run record: summary + the exact 256-entry LUT."""
+    try:
+        lut = greyscale.correction_lut(cfg)
+        return {**greyscale.describe(cfg), "lut": (lut.tolist() if lut is not None else None)}
+    except Exception as e:
+        return {"mode": "invalid", "error": str(e)}
+
+
+@app.post("/api/greyscale_calibration")
+def greyscale_calibration():
+    """Pick a measured greyscale-calibration CSV (displayed level vs. meter reading)
+    and return it as a projector "lut" config.  The GUI stores the config on the
+    projector profile; nothing is applied here."""
+    path = open_file_dialog(title="Open greyscale calibration (CSV)",
+                            filt="CSV files (*.csv;*.txt)|*.csv;*.txt|All files (*.*)|*.*")
+    if not path:
+        return jsonify({"status": "cancelled"})
+    try:
+        cfg = greyscale.parse_calibration_csv(path)
+        greyscale.correction_lut(cfg)                # validate before handing it back
+        print(f"[server] greyscale calibration <- {os.path.basename(path)}: {greyscale.describe(cfg)}")
+        return jsonify({"status": "ok", "greyscale": cfg, "summary": greyscale.describe(cfg)})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"status": "error", "message": str(e)}), 400
 
 
 @app.post("/api/download_sinogram")
@@ -1110,6 +1141,7 @@ def save_run():
     if "video_rpm" in data: vam.video_rpm = float(data["video_rpm"])          # rpm/duration now set on the video page
     if "video_fps" in data: vam.video_fps = float(data["video_fps"])
     if "video_duration_s" in data: vam.video_duration_s = float(data["video_duration_s"])
+    if "greyscale" in data: vam.greyscale = data["greyscale"]
     path = save_file_dialog(default_name + ".mp4")
     if not path:
         return jsonify({"status": "cancelled"})
@@ -1135,6 +1167,7 @@ def save_run():
                     "dose_metrics": getattr(vam, "dose_metrics", None),
                     "sino_is_rebinned": bool(getattr(vam, "_sino_is_rebinned", False)),
                     "gui_settings": data.get("gui_settings"),
+                    "greyscale": getattr(vam, "greyscale", None),
                     "run_params": _gather_run_params(vam),
                 }, f)
             saved.append(base + ".tomo")
@@ -1207,6 +1240,7 @@ def load_run():
         vam.recon = d.get("recon")
         vam.dose_metrics = d.get("dose_metrics")
         vam._sino_is_rebinned = bool(d.get("sino_is_rebinned", False))
+        vam.greyscale = d.get("greyscale")
         if vam.sino is None:
             return jsonify({"status": "error", "message": "File has no sinogram"}), 400
         mp4_path = None
@@ -1437,6 +1471,7 @@ def update_video_config():
     vam.proj_px_w = int(data.get("proj_px_w", vam.proj_px_w))
     vam.proj_px_h = int(data.get("proj_px_h", vam.proj_px_h))
     vam.video_v_offset_mm = float(data.get("v_offset_mm", vam.video_v_offset_mm))   # GUI vertical (Z) projection offset
+    if "greyscale" in data: vam.greyscale = data["greyscale"]      # projector greyscale LUT/gamma
 
     try:
         # Regenerate the preview cache with the new true_scale and fps

@@ -25,6 +25,23 @@ const DEFAULT_VIALS = [
   { id: "medium", name: "Medium — Ø40 × 80 mm", radius: 20, height: 80 },
   { id: "large", name: "Large — Ø100 × 150 mm", radius: 50, height: 150 },
 ];
+// Projector greyscale correction sent to the backend (see Python_Backend/greyscale.py).
+// A "Measured LUT" selection with no calibration loaded yet behaves as off.
+function greyscaleCfg(p) {
+  const g = p && p.greyscale;
+  if (!g || !g.mode || g.mode === "off") return { mode: "off" };
+  if (g.mode === "gamma") return { mode: "gamma", gamma: g.gamma ?? 2.2 };
+  if (g.mode === "lut" && Array.isArray(g.levels) && g.levels.length >= 2)
+    return { mode: "lut", levels: g.levels, response: g.response, source: g.source };
+  return { mode: "off" };
+}
+function greyscaleLabel(p) {
+  const g = greyscaleCfg(p);
+  if (g.mode === "gamma") return `γ ${g.gamma} correction`;
+  if (g.mode === "lut") return `greyscale LUT (${g.source || "measured"})`;
+  return "linear greyscale";
+}
+
 // Projector presets set the voxel pitch; "Custom" reveals a number input.
 // A projector = pixel dimensions (W×H, oriented for the vial: H is the tall vial axis) +
 // pixel pitch (µm). Pitch drives the print/voxel resolution; W×H drives the output video.
@@ -288,6 +305,17 @@ export default function App() {
   const [projectorDraft, setProjectorDraft] = useState(null);
   const [editingProjectorId, setEditingProjectorId] = useState(null);
   const activeProjector = projectors.find(p => p.id === projector) || projectors[0];
+  // Greyscale correction is applied to the preview + video frames on the backend, so a
+  // change to the active projector's correction re-renders the existing preview.
+  const greyscaleKey = JSON.stringify(greyscaleCfg(activeProjector));
+  useEffect(() => {
+    if (!previewInfo) return;
+    fetch(`${API}/update_video_config`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ greyscale: greyscaleCfg(activeProjector) }),
+    }).then(r => { if (r.ok) setVideoStamp(Date.now()); })
+      .catch(e => console.error("greyscale update failed", e));
+  }, [greyscaleKey]);   // eslint-disable-line react-hooks/exhaustive-deps
   const [scaleLock, setScaleLock] = useState(true);   // uniform scale lock
   const [dragOver, setDragOver] = useState(false);    // STL drag-and-drop hover
   const [infoOpen, setInfoOpen] = useState("");       // which info popover is open
@@ -483,6 +511,15 @@ export default function App() {
       const r = d.pitchUm / 1000; setBasePitch(r); setVoxScale(1); setResolution(r);
     }
     setProjectorModal(false);
+  };
+  // Load a measured greyscale calibration CSV into the projector being edited.
+  const loadGreyscaleCalibration = async () => {
+    try {
+      const d = await fetch(`${API}/greyscale_calibration`, { method: "POST" }).then(r => r.json());
+      if (d.status === "cancelled") return;
+      if (d.status !== "ok") { alert("Calibration not loaded: " + (d.message || "unknown error")); return; }
+      setProjectorDraft(p => ({ ...p, greyscale: { ...d.greyscale, gamma: p.greyscale?.gamma ?? 2.2, summary: d.summary } }));
+    } catch (e) { console.error("greyscale calibration load failed", e); alert("Calibration not loaded"); }
   };
   // -- materials --
   const selectMaterial = (id) => {
@@ -793,6 +830,7 @@ export default function App() {
                                proj_width: activeProjector.pxW * activeProjector.pitchUm / 1000,
                                telecentric: activeProjector.telecentric !== false,
                                throw_ratio: activeProjector.throwRatio,
+                               greyscale: greyscaleCfg(activeProjector),
                                video_fps: videoFps, video_rpm: videoRpm,
                                video_duration_s: videoDurMin * 60, video_codec: videoCodec }),
       });
@@ -878,6 +916,7 @@ export default function App() {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ default_name: base, save_sinogram: saveSinogram, video_intensity: videoIntensity,
                                video_rpm: videoRpm, video_fps: videoFps, video_duration_s: videoDurMin * 60,
+                               greyscale: greyscaleCfg(activeProjector),
                                gui_settings: collectSettings() }),   // embedded in the .tomo for reload
       });
       const d = await res.json();
@@ -1107,6 +1146,30 @@ export default function App() {
               <div style={{ flex: 1, paddingBottom: 2 }}><Toggle value={projectorDraft.telecentric !== false} onChange={v => setProjectorDraft(d => ({ ...d, telecentric: v }))} label="Telecentric (collimated)" /></div>
               {projectorDraft.telecentric === false &&
                 <div style={{ width: 110 }}><Lbl>Throw ratio</Lbl><NumInput step={0.1} value={projectorDraft.throwRatio} onChange={v => setProjectorDraft(d => ({ ...d, throwRatio: Math.max(0.1, v) }))} /></div>}
+            </div>
+            <div style={{ marginTop: 12 }}>
+              <Lbl>Greyscale correction</Lbl>
+              <select value={projectorDraft.greyscale?.mode || "off"} style={selInput}
+                onChange={e => { const mode = e.target.value; setProjectorDraft(d => ({ ...d, greyscale: { ...(d.greyscale || {}), mode, gamma: d.greyscale?.gamma ?? 2.2 } })); }}>
+                <option value="off">Off (linear projector)</option>
+                <option value="gamma">Gamma</option>
+                <option value="lut">Measured LUT</option>
+              </select>
+              {projectorDraft.greyscale?.mode === "gamma" &&
+                <div style={{ marginTop: 8, width: 110 }}><Lbl>Gamma</Lbl><NumInput step={0.05} value={projectorDraft.greyscale.gamma ?? 2.2} onChange={v => setProjectorDraft(d => ({ ...d, greyscale: { ...d.greyscale, gamma: Math.max(0.1, v) } }))} /></div>}
+              {projectorDraft.greyscale?.mode === "lut" && (
+                <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
+                  <Btn onClick={loadGreyscaleCalibration} style={{ flexShrink: 0 }}>Load calibration CSV…</Btn>
+                  <span style={{ fontSize: 11, color: projectorDraft.greyscale.levels ? C.text : "#f0b84a", lineHeight: 1.4 }}>
+                    {projectorDraft.greyscale.levels
+                      ? `${projectorDraft.greyscale.source} · ${projectorDraft.greyscale.levels.length} levels`
+                        + (projectorDraft.greyscale.summary?.effective_gamma ? ` · γ≈${projectorDraft.greyscale.summary.effective_gamma.toFixed(2)}` : "")
+                      : "No calibration loaded (correction off)"}
+                  </span>
+                </div>)}
+              <div style={{ fontSize: 11, color: C.muted, marginTop: 6, lineHeight: 1.5 }}>
+                Maps the linear intensities the optimizer computes onto the pixel values that make this projector deliver them. For a measured LUT, record the irradiance of full-frame grey images (0–255) and load a CSV of level vs. reading.
+              </div>
             </div>
             <div style={{ fontSize: 11, color: C.muted, marginTop: 8, lineHeight: 1.5 }}>
               Build area: <b style={{ color: C.text }}>{(projectorDraft.pxW * projectorDraft.pitchUm / 1000).toFixed(1)} × {(projectorDraft.pxH * projectorDraft.pitchUm / 1000).toFixed(1)} mm</b>. Height is the tall vial axis; pitch sets the print resolution. {projectorDraft.telecentric === false ? "A finite throw ratio models a diverging projector in the vial-correction rebin." : "Telecentric = collimated parallel rays (throw ratio ∞)."}
@@ -1457,7 +1520,7 @@ export default function App() {
                 {projectors.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>
               <div style={{ fontSize: 11, color: C.muted, marginTop: -2 }}>
-                {activeProjector.pxW}×{activeProjector.pxH} px · {activeProjector.pitchUm} µm/px · {(activeProjector.pxW * activeProjector.pitchUm / 1000).toFixed(0)}×{(activeProjector.pxH * activeProjector.pitchUm / 1000).toFixed(0)} mm · {activeProjector.telecentric === false ? `throw ${activeProjector.throwRatio}` : "telecentric"}
+                {activeProjector.pxW}×{activeProjector.pxH} px · {activeProjector.pitchUm} µm/px · {(activeProjector.pxW * activeProjector.pitchUm / 1000).toFixed(0)}×{(activeProjector.pxH * activeProjector.pitchUm / 1000).toFixed(0)} mm · {activeProjector.telecentric === false ? `throw ${activeProjector.throwRatio}` : "telecentric"} · {greyscaleLabel(activeProjector)}
               </div>
 
               <div>

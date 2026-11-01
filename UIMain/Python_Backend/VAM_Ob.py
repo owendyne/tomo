@@ -2,6 +2,7 @@ import os
 import tempfile
 import trimesh
 import openglvoxelizer
+import greyscale
 import vamtoolbox as vamtb
 import numpy as np
 
@@ -61,6 +62,7 @@ class VAM:
         self.video_codec      = "h265"  # "h265" | "mp4v"
         self.video_intensity  = 1.0     # projected-pattern brightness scale (GUI intensity control)
         self.video_v_offset_mm = 0.0    # vertical (Z) shift of the projection in the frame, mm (GUI control)
+        self.greyscale = None           # projector greyscale correction (see greyscale.py); None = off
 
         # Full 4x4 column-major matrix from Three.js (flat list of 16 floats).
         # None = identity = use STL as-is.
@@ -546,7 +548,10 @@ class VAM:
         # vertically (np.flipud) before projecting, because pyglet textures are
         # bottom-origin.  The cv2/ffmpeg paths here are top-origin, so without the
         # same flip the preview/video is upside-down vs what actually gets printed.
-        frames = [np.ascontiguousarray(np.flipud(im)) for im in image_seq.images]
+        # The greyscale LUT is applied here too, so the preview shows the values the
+        # projector will actually be sent.
+        images = greyscale.apply_lut(image_seq.images, greyscale.correction_lut(self.greyscale))
+        frames = [np.ascontiguousarray(np.flipud(im)) for im in images]
         n = len(frames)
         # Preview shows exactly ONE rotation (the n sinogram angles) and the
         # frontend loops it; pick an fps that plays a rotation in a few seconds.
@@ -585,7 +590,12 @@ class VAM:
             image_config=iconfig, sinogram=self.sino
         )
 
-        n_images = len(image_seq.images)            # one full 360° rotation
+        # Projector greyscale correction: map the linear intensities VAMToolbox
+        # computed onto the 8-bit values that make this projector deliver them.
+        images = greyscale.apply_lut(image_seq.images, greyscale.correction_lut(self.greyscale))
+        if self.greyscale and self.greyscale.get("mode", "off") != "off":
+            print(f"[VAM] Greyscale correction: {greyscale.describe(self.greyscale)}")
+        n_images = len(images)                      # one full 360° rotation
 
         fps        = float(getattr(self, "video_fps", 54.0))
         rpm        = float(getattr(self, "video_rpm", 1.0))
@@ -608,7 +618,7 @@ class VAM:
             # np.flipud to match vamtoolbox's DLP projector (dlp/players.py) — the
             # bottom-origin pyglet path flips each frame; keep the saved video in the
             # same orientation as the real print (and as the live preview above).
-            g = np.flipud(image_seq.images[idx])
+            g = np.flipud(images[idx])
             return np.repeat(g[:, :, None], 3, axis=2)   # grey -> (H, W, 3) RGB
 
         # Encode through the ffmpeg binary BUNDLED with imageio-ffmpeg.  This is
